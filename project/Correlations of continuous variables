@@ -1,0 +1,36 @@
+library(readr)
+library(dplyr)
+library(ggplot2)
+
+data0 <- read_delim(file = "C:/My Study/A Masters/Data Science/11. Predicting surgical case durations Project/surgical_case_durations.csv",
+                    delim = ";", col_names = TRUE, col_types = NULL, locale = locale(encoding="ISO-8859-1"))
+
+
+
+#dimensions + data types
+dim(data0)
+sapply(data0, class) # Find the class of the variables
+
+# make continous variables as numeric variables
+data0$Chirurg <- as.numeric (as.factor(data0$Chirurg), stringsAsFactors=FALSE) 
+data0$Anesthesioloog <- as.numeric (as.factor(data0$Anesthesioloog), stringsAsFactors=FALSE) 
+data0$Euroscore1 <- as.numeric (as.factor(data0$Euroscore1), stringsAsFactors=FALSE) 
+data0$Euroscore2 <- as.numeric (as.factor(data0$Euroscore2), stringsAsFactors=FALSE) 
+data0$BMI <- as.numeric (as.factor(data0$BMI), stringsAsFactors=FALSE) 
+data0$CCS <- as.numeric (as.factor(data0$CCS), stringsAsFactors=FALSE) 
+data0$NYHA <- as.numeric (as.factor(data0$NYHA), stringsAsFactors=FALSE) 
+
+# Plotting correlations
+plot(data0$Chirurg, data0$Operatieduur, cex=0.5)
+plot(data0$Anesthesioloog, data0$Operatieduur, cex=0.5)
+plot(data0$Euroscore1, data0$Operatieduur, cex=0.5)
+plot(data0$Euroscore2, data0$Operatieduur, cex=0.5)
+plot(data0$BMI, data0$Operatieduur, cex=0.5)
+plot(data0$CCS, data0$Operatieduur, cex=0.5)
+plot(data0$NYHA, data0$Operatieduur, cex=0.5)
+
+# correlations matrix
+attach(data0)
+library(lattice)
+splom(~data0$Chirurg+data0$Anesthesioloog+data0$Euroscore1+data0$Euroscore2+data0$BMI)
+splom(~data0[c(2,3,8,20,21,34)], groups = NULL, data = data0)
