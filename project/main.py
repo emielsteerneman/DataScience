@@ -13,26 +13,109 @@ print(columnNames)
 # 	print("\n")
 # 	print(data[c][1:5])
 
+# Add the difference in estimated duration and actual duration to the dataset
 data['diff'] = data.apply(lambda row : row['Operatieduur'] - row['Geplande operatieduur'], axis=1)
 diffs = data[data['diff'].notnull()]['diff']
 print()
-print(" overestimated : %d" % diffs[diffs > 0].size)
-print("     estimated : %d" % diffs[diffs == 0].size)
-print("underestimated : %d" % diffs[diffs < 0].size)
+print(" overestimated : %d  \t %d minutes" % (diffs[diffs > 0].size, sum(diffs[diffs > 0])))
+print("     estimated : %d  \t %d minutes" % (diffs[diffs== 0].size, sum(diffs[diffs== 0])))
+print("underestimated : %d  \t %d minutes" % (diffs[diffs < 0].size, sum(diffs[diffs < 0])))
+
+groups = data.groupby('Operatietype')	# Group data by operation type
+operationTypes = groups.groups.keys()	# Get all types of operations
 
 
-groups = data.groupby('Operatietype')
-operationTypes = groups.groups.keys()
-print("Number of operation types     : %d" % len(operationTypes))
-myFilter = groups.size() == 1
-print("Number of operations filtered : %d" % len(groups.size()[myFilter]))
-onces = list(groups.size()[myFilter].keys())
-rows = data[data['Operatietype'].isin(onces)][['Operatietype', 'Geplande operatieduur', 'Operatieduur', 'diff']]
+nOperations = len(data)					# Count the total number of operations
+myFilter = groups.size() >= 30			# Define a filter
+nOperationsAfterFilter = sum(groups.size()[myFilter].values) # Count the total number of operations after applying the filter
+print()	
+print("Number of operation types              : %d   (%d operations)" % (len(operationTypes), nOperations))
+print("Number of operation types after filter :  %d   (%d operations)" % (len(groups.size()[myFilter]), nOperationsAfterFilter))
 
-# for once in onces:
-# 	print(once)
+### Build a graph to justify the threshold of 30 operations
+if False:
+	plt.clf()
+	gI = []
+	gTypes = []
+	gOperations = []
+	for i in range(0, 500):
+		myFilter = i <= groups.size()		# Create filter
+		types = groups.size()[myFilter]		# Filter groups 
+		nTypes = len(types)					# Count the number of groups left
+		nOperations = sum(types.values)		# Count the number of operations that the groups left hold
+		gI.append(i)						# Store i
+		gTypes.append(nTypes)				# Store number of types
+		gOperations.append(nOperations)		# Store number of operations
+	fig, ax1 = plt.subplots()
+	ax2 = ax1.twinx()
+	ax1.plot(gI, gTypes, c="red")
+	ax1.tick_params('y', colors='red')
+	ax1.axvline(x=20, c="black")
+	ax1.set_ylabel("# distinct operation types", color="red")
 
-print(rows.to_string())
+	ax2.plot(gI, gOperations, c="blue")
+	ax2.tick_params('y', colors='blue')
+	ax2.set_ylabel("# operations", color="blue")
+
+	ax1.set_xlabel("Threshold value")
+	fig.tight_layout()
+	plt.show()
+
+
+### Plot the estimated duration against the error
+if True:
+	plt.clf()
+	commonOperations = groups.size()[30 <= groups.size()].keys()
+	for t in commonOperations:
+		group = groups.get_group(t)
+		group = group[group['Geplande operatieduur'] <= 400]
+		x = group['Geplande operatieduur']
+		y = group['diff']
+		plt.scatter(x, y, s=3)
+
+	plt.title("Planned duration plotted against the difference (or error)")
+	plt.xlabel("Planned duration")
+	plt.ylabel("Difference between planned and actual duration")
+	plt.show()
+
+### Plot the Euroscore2 against the error
+if True:
+	plt.clf()
+	commonOperations = groups.size()[30 <= groups.size()].keys()
+	for t in commonOperations:
+		group = groups.get_group(t)
+		# group = group[group['Geplande operatieduur'] <= 400]
+		group = group[['Euroscore2', 'diff']]
+		group = group.dropna()
+		group['Euroscore2'] = group['Euroscore2'].apply(lambda f : float(f.replace(",", ".")))
+		x = group['Euroscore2']
+		y = group['diff']
+		plt.scatter(x, y, s=3)
+
+	plt.title("Euroscore2 plotted against the difference (or error)")
+	plt.xlabel("Euroscore2")
+	plt.ylabel("Difference between planned and actual duration")
+	plt.show()
+	exit()
+
+### Check which operations are underestimated the most
+print("\nOperations that are underestimated the most:")
+commonOperations = groups.size()[30 <= groups.size()].keys()
+underestimationPerType = []
+for t in commonOperations:
+	group = groups.get_group(t)
+	underestimated = group[group['diff'] > 10]
+	minutes = sum(underestimated['diff'].values)
+	nUnderestimated = len(underestimated)
+	nTotal = len(group)
+	percentage = nUnderestimated / nTotal
+	underestimationPerType.append([t, percentage, nTotal, nUnderestimated, minutes])
+
+underestimationPerType.sort(key = lambda x : x[1], reverse=True)
+for t, p, nT, nU, m in underestimationPerType:
+	print(t.rjust(70), "%0.2f" % p, ("%d"%nU).rjust(4), "/", ("%d"%nT).rjust(4), "   ", m, "minutes")
+
+exit()
 
 
 
