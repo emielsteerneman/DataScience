@@ -6,7 +6,7 @@ import matplotlib.pyplot as plt
 sns.set(style="ticks", color_codes=True)
 
 data = pd.read_csv("./surgical_case_durations.csv", delimiter=";", encoding="ISO-8859-1")
-columnNames = list(data.columns.values)
+
 # print(columnNames)
 
 # for c in columnNames:
@@ -20,13 +20,51 @@ operationGroups = operationGroups.size()[30 <= operationGroups.size()] # Only ke
 operationTypes = operationGroups.keys().values	# Get types of operations
 data = data[data['Operatietype'].isin(operationTypes)] # Filter out operations that are done less than 30 times
 
-### Calculate percentage of null values in columns
-for c in columnNames:
-
-exit()
+# Replace all commas with dots so floats can be parsed correctly
+data.replace(to_replace=",", value=".", inplace=True, regex=True)
+# Replace all "Onbekend" occurrences with NaN
+data.replace(to_replace="Onbekend", value=np.nan, inplace=True)
 
 # Add the difference in estimated duration and actual duration to the dataset
 data['diff'] = data.apply(lambda row : row['Operatieduur'] - row['Geplande operatieduur'], axis=1)
+
+### Calculate percentage of null values in columns
+columnNames = list(data.columns.values)
+for i, c in enumerate(columnNames):
+	col = data[c]
+	total = len(col)
+	nan = len(col[col.isna()])
+	print(i, "\t%0.4f " % (nan / total), c)
+
+nanFracs = [0] * len(columnNames)
+def x(row):
+	nanFracs[len(row[row.isna()])] += 1
+	# print(row)
+data.apply(x , axis=1)
+print(list(enumerate(nanFracs)))
+
+
+### Check which columns are numerical
+numericalCols = []
+for col in columnNames:
+	try:
+		data[col] = data[col].apply(lambda x : float(x))
+		numericalCols.append(col)
+	except:
+		pass
+	# print(values)
+
+print("Numerical columns:")
+print(numericalCols)
+
+### Compare correlation of all numerical columns against the planned duration
+for col in numericalCols:
+	c = data[col].corr(data["Operatieduur"])
+	print("%0.3f" % c, col)
+
+exit()
+
+
 diffs = data[data['diff'].notnull()]['diff']
 print()
 print(" overestimated : %d  \t %d minutes" % (diffs[diffs > 0].size, sum(diffs[diffs > 0])))
