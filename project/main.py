@@ -7,11 +7,23 @@ sns.set(style="ticks", color_codes=True)
 
 data = pd.read_csv("./surgical_case_durations.csv", delimiter=";", encoding="ISO-8859-1")
 columnNames = list(data.columns.values)
-print(columnNames)
+# print(columnNames)
 
 # for c in columnNames:
 # 	print("\n")
 # 	print(data[c][1:5])
+
+
+### Filter out operations that have been done less than 30 times
+operationGroups = data.groupby('Operatietype')	# Group data by operation type
+operationGroups = operationGroups.size()[30 <= operationGroups.size()] # Only keep operations that have been done at least 30 times
+operationTypes = operationGroups.keys().values	# Get types of operations
+data = data[data['Operatietype'].isin(operationTypes)] # Filter out operations that are done less than 30 times
+
+### Calculate percentage of null values in columns
+for c in columnNames:
+
+exit()
 
 # Add the difference in estimated duration and actual duration to the dataset
 data['diff'] = data.apply(lambda row : row['Operatieduur'] - row['Geplande operatieduur'], axis=1)
@@ -23,14 +35,14 @@ print("underestimated : %d  \t %d minutes" % (diffs[diffs < 0].size, sum(diffs[d
 
 groups = data.groupby('Operatietype')	# Group data by operation type
 operationTypes = groups.groups.keys()	# Get all types of operations
-
-
 nOperations = len(data)					# Count the total number of operations
 myFilter = groups.size() >= 30			# Define a filter
 nOperationsAfterFilter = sum(groups.size()[myFilter].values) # Count the total number of operations after applying the filter
 print()	
 print("Number of operation types              : %d   (%d operations)" % (len(operationTypes), nOperations))
 print("Number of operation types after filter :  %d   (%d operations)" % (len(groups.size()[myFilter]), nOperationsAfterFilter))
+
+
 
 ### Build a graph to justify the threshold of 30 operations
 if False:
@@ -61,9 +73,8 @@ if False:
 	fig.tight_layout()
 	plt.show()
 
-
 ### Plot the estimated duration against the error
-if True:
+if False:
 	plt.clf()
 	commonOperations = groups.size()[30 <= groups.size()].keys()
 	for t in commonOperations:
@@ -79,7 +90,7 @@ if True:
 	plt.show()
 
 ### Plot the Euroscore2 against the error
-if True:
+if False:
 	plt.clf()
 	commonOperations = groups.size()[30 <= groups.size()].keys()
 	for t in commonOperations:
