@@ -7,11 +7,15 @@ sns.set(style="ticks", color_codes=True)
 
 data = pd.read_csv("./surgical_case_durations.csv", delimiter=";", encoding="ISO-8859-1")
 
-# print(columnNames)
+# print((data))
+data.replace(to_replace="Onbekend", value=np.nan, inplace=True)
+# print(data.isna().sum().values.sum())
+# exit()
 
-# for c in columnNames:
-# 	print("\n")
-# 	print(data[c][1:5])
+# wer = data[data['Operatietype'] == "Bentall procedure"]['Operatieduur']
+# print(wer)
+# print(wer.var())
+# exit()
 
 
 ### Filter out operations that have been done less than 30 times
@@ -24,43 +28,123 @@ data = data[data['Operatietype'].isin(operationTypes)] # Filter out operations t
 data.replace(to_replace=",", value=".", inplace=True, regex=True)
 # Replace all "Onbekend" occurrences with NaN
 data.replace(to_replace="Onbekend", value=np.nan, inplace=True)
+# Replace "Ander specialisme" with -1 so that the "chirurg" column can be interpreted nominally
+data['Chirurg'].replace(to_replace="Ander specialisme", value=-1, inplace=True)
 
 # Add the difference in estimated duration and actual duration to the dataset
 data['diff'] = data.apply(lambda row : row['Operatieduur'] - row['Geplande operatieduur'], axis=1)
 
-### Calculate percentage of null values in columns
+
+### Calculate fraction of missing values in columns
+def calcFracMissingPerCol(df):
+	fracMissingPerCol = {}
+
+	columnNames = list(df.columns.values)
+	for i, c in enumerate(columnNames):
+		col = data[c]
+		total = len(col)
+		nan = len(col[col.isna()])
+		fracMissingPerCol[c] = 1 - (nan / total)
+		# print(i, "\t%0.2f " % (1 - nan / total), c)
+	return fracMissingPerCol
+
+# nanFracs = [0] * len(columnNames)
+# def x(row):
+# 	nanFracs[len(row[row.isna()])] += 1
+# data.apply(x , axis=1)
+# print(list(enumerate(nanFracs)))
+
+
+### Check which columns are numerical or categorical
 columnNames = list(data.columns.values)
-for i, c in enumerate(columnNames):
-	col = data[c]
-	total = len(col)
-	nan = len(col[col.isna()])
-	print(i, "\t%0.4f " % (nan / total), c)
-
-nanFracs = [0] * len(columnNames)
-def x(row):
-	nanFracs[len(row[row.isna()])] += 1
-	# print(row)
-data.apply(x , axis=1)
-print(list(enumerate(nanFracs)))
-
-
-### Check which columns are numerical
 numericalCols = []
+categoricalCols = []
 for col in columnNames:
 	try:
 		data[col] = data[col].apply(lambda x : float(x))
 		numericalCols.append(col)
-	except:
-		pass
-	# print(values)
+	except Exception as e:
+		# print("Non-numerical:", col, e)
+		categoricalCols.append(col)
 
-print("Numerical columns:")
-print(numericalCols)
+### Remove numerical columns that should not be used for predicting the Operatieduur
+numericalCols = list(set(numericalCols) - set(["Operatieduur", "Geplande operatieduur", "Ziekenhuis ligduur", "IC ligduur", "diff"]))
+print("Numerical columns (%d):" % len(numericalCols))
+print("    ", ", ".join(numericalCols))
+# Print categorical columns
+print("Categorical columns (%d):" % len(categoricalCols))
+print("    ", ", ".join(categoricalCols))
 
-### Compare correlation of all numerical columns against the planned duration
+### Compare correlation of all numerical columns against the operation duration
+print("\nCompare correlation of all numerical columns against the operation duration")
 for col in numericalCols:
 	c = data[col].corr(data["Operatieduur"])
-	print("%0.3f" % c, col)
+	print("    %0.3f" % c, col)
+
+### Compare correlation of all categorical columns against the operation duration
+print("\nCompare variance reduction of all categorical columns against the overall variance of the operation duration")
+nBefore = len(data['Operatieduur'])
+varBefore = data['Operatieduur'].var()
+results = []
+fracMissingPerColumn = calcFracMissingPerCol(data)
+for col in categoricalCols:
+	groups = data.groupby(col)	# Get the group
+	keys = groups.groups.keys() # Get the different types in the group
+	totalVar = 0				
+	for k in keys:				# For each type
+		group = groups.get_group(k)			# Get the group
+		var = group['Operatieduur'].var()	# Calculate its variance
+		if math.isnan(var):					# If the variance is NaN (happens when group only has 1 value)
+			var = 0								# Set variance to 0
+		frac = len(group['Operatieduur']) / nBefore # Calculate fraction
+		totalVar += var * frac / fracMissingPerColumn[col] # Add variance*fraction to total variance of type, and account for fraction of missing values
+		# totalVar += var * frac 				# Add variance*fraction to total variance of type
+
+		# print("\n", col, k)
+		# for col2 in numericalCols:
+		# 	c = group[col2].corr(group["Operatieduur"])
+		# 	print("    %0.3f" % c, col2)
+	results.append([col, len(keys), totalVar, totalVar / varBefore])
+
+results.sort(key=lambda r : r[2])
+print("CATEGORY".rjust(35), "# TYPES".rjust(10), "Total variance".rjust(15), "Fraction".rjust(10))
+print("Before".rjust(35), "-".rjust(10), ("%0.2f" % varBefore).rjust(15), "1.00".rjust(10))
+for col, nKeys, var, frac in results[:5]:
+	print(col.rjust(35), ("%s" % nKeys).rjust(10), ("%0.2f" % var).rjust(15), ("%0.2f" % frac).rjust(10))
+
+
+bestCol = results[0][0]
+bestColGroups = data.groupby(bestCol)
+bestColGroupsKeys = bestColGroups.groups.keys()
+for key1 in bestColGroupsKeys:
+	group1 = bestColGroups.get_group(key1)
+	nBefore = len(group1['Operatieduur'])
+	varBefore = group1['Operatieduur'].var()
+	results = []
+	fracMissingPerColumn = calcFracMissingPerCol(group1)
+	for col in categoricalCols:
+		groups = group1.groupby(col)	# Get the group
+		keys = groups.groups.keys() # Get the different types in the group
+		if len(keys) < 2:
+			continue
+		totalVar = 0				
+		for key2 in keys:				# For each type
+			group2 = groups.get_group(key2)			# Get the group
+			var = group2['Operatieduur'].var()	# Calculate its variance
+			if math.isnan(var):					# If the variance is NaN (happens when group only has 1 value)
+				var = 0								# Set variance to 0
+			frac = len(group2['Operatieduur']) / nBefore # Calculate fraction
+			totalVar += var * frac / fracMissingPerColumn[col] # Add variance*fraction to total variance of type, and account for fraction of missing values
+		results.append([col, len(keys), totalVar, totalVar / varBefore, fracMissingPerColumn[col]])
+
+	results.sort(key=lambda r : r[2])
+	print("\n%s" % key1)
+	print("CATEGORY".rjust(35), "# TYPES".rjust(10), "Total variance".rjust(15), "Fraction".rjust(10))
+	print("Before".rjust(35), "-".rjust(10), ("%0.2f" % varBefore).rjust(15), "1.00".rjust(10))
+	for col, nKeys, var, frac, missing in results[:5]:
+		print(col.rjust(35), ("%s" % nKeys).rjust(10), ("%0.2f" % var).rjust(15), ("%0.2f" % frac).rjust(10), ("%0.2f" % missing).rjust(10))
+
+
 
 exit()
 
@@ -164,7 +248,7 @@ underestimationPerType.sort(key = lambda x : x[1], reverse=True)
 for t, p, nT, nU, m in underestimationPerType:
 	print(t.rjust(70), "%0.2f" % p, ("%d"%nU).rjust(4), "/", ("%d"%nT).rjust(4), "   ", m, "minutes")
 
-exit()
+# exit()
 
 
 
