@@ -29,7 +29,7 @@ data.replace(to_replace=",", value=".", inplace=True, regex=True)
 # Replace all "Onbekend" occurrences with NaN
 data.replace(to_replace="Onbekend", value=np.nan, inplace=True)
 # Replace "Ander specialisme" with -1 so that the "chirurg" column can be interpreted nominally
-data['Chirurg'].replace(to_replace="Ander specialisme", value=-1, inplace=True)
+# data['Chirurg'].replace(to_replace="Ander specialisme", value=-1, inplace=True)
 
 # Add the difference in estimated duration and actual duration to the dataset
 data['diff'] = data.apply(lambda row : row['Operatieduur'] - row['Geplande operatieduur'], axis=1)
@@ -47,6 +47,46 @@ def calcFracMissingPerCol(df):
 		fracMissingPerCol[c] = 1 - (nan / total)
 		# print(i, "\t%0.2f " % (1 - nan / total), c)
 	return fracMissingPerCol
+
+def calcBestSplit(df, cols, target, log=True):
+	results = []
+
+	for col in cols:
+		groups = df.fillna(-1).groupby(col)	# Group the data by the column
+		keys = groups.groups.keys() 		# Get the different types in the groups
+		varTotal = 0						# Variance accumulator
+		fracMissingPerCol = calcFracMissingPerCol(df)
+
+		nTarget = len(df[target])		# Number of datapoints in target
+		varTarget = df[target].var()	# Variance of target
+
+		if len(keys) < 2:			# If the group cannot be split
+			continue				#     Skip the group
+
+		for key in keys:			# For each type
+			group = groups.get_group(key)		# Get the group
+			var = group[target].var()			# Calculate its variance of the target column
+			if math.isnan(var):					# If the variance is NaN (happens when group only has 1 value)
+				var = 1							#     Set variance to 0
+			weight = len(group) / nTarget 		# Calculate weight of variance
+			varTotal += var * weight 			# Add weighted variance to total variance of type
+			# print("    ", col, "|", key, "var=%0.4f" % var, "weight=%0.4f" % weight, "fm=%0.4f" % fracMissingPerCol[col], "n=%d" % len(group))
+
+		results.append([col, len(keys), varTotal, varTotal / varTarget])
+
+
+
+	if log:
+		results.sort(key=lambda r : r[2])
+		print("\n", "=" * 30, "calcBestSplit", "=" * 30)
+		print("CATEGORY".rjust(35), "# TYPES".rjust(10), "VARIANCE".rjust(10))
+		print("TARGET".rjust(35), "-".rjust(10), "1.00".rjust(10))
+		for col, nKeys, var, frac in results:
+			print(col.rjust(35), ("%s" % nKeys).rjust(10), ("%0.2f" % frac).rjust(10))
+
+	return results[0]
+
+
 
 # nanFracs = [0] * len(columnNames)
 # def x(row):
@@ -81,70 +121,33 @@ for col in numericalCols:
 	c = data[col].corr(data["Operatieduur"])
 	print("    %0.3f" % c, col)
 
-### Compare correlation of all categorical columns against the operation duration
-print("\nCompare variance reduction of all categorical columns against the overall variance of the operation duration")
-nBefore = len(data['Operatieduur'])
-varBefore = data['Operatieduur'].var()
-results = []
-fracMissingPerColumn = calcFracMissingPerCol(data)
-for col in categoricalCols:
-	groups = data.groupby(col)	# Get the group
-	keys = groups.groups.keys() # Get the different types in the group
-	totalVar = 0				
-	for k in keys:				# For each type
-		group = groups.get_group(k)			# Get the group
-		var = group['Operatieduur'].var()	# Calculate its variance
-		if math.isnan(var):					# If the variance is NaN (happens when group only has 1 value)
-			var = 0								# Set variance to 0
-		frac = len(group['Operatieduur']) / nBefore # Calculate fraction
-		totalVar += var * frac / fracMissingPerColumn[col] # Add variance*fraction to total variance of type, and account for fraction of missing values
-		# totalVar += var * frac 				# Add variance*fraction to total variance of type
 
-		# print("\n", col, k)
-		# for col2 in numericalCols:
-		# 	c = group[col2].corr(group["Operatieduur"])
-		# 	print("    %0.3f" % c, col2)
-	results.append([col, len(keys), totalVar, totalVar / varBefore])
+result = calcBestSplit(data, categoricalCols, "Operatieduur")
 
-results.sort(key=lambda r : r[2])
-print("CATEGORY".rjust(35), "# TYPES".rjust(10), "Total variance".rjust(15), "Fraction".rjust(10))
-print("Before".rjust(35), "-".rjust(10), ("%0.2f" % varBefore).rjust(15), "1.00".rjust(10))
-for col, nKeys, var, frac in results[:5]:
-	print(col.rjust(35), ("%s" % nKeys).rjust(10), ("%0.2f" % var).rjust(15), ("%0.2f" % frac).rjust(10))
+if True:
+	groups = data.groupby([result[0]])
+	keys = groups.groups.keys()
+	n = len(data)
 
 
-bestCol = results[0][0]
-bestColGroups = data.groupby(bestCol)
-bestColGroupsKeys = bestColGroups.groups.keys()
-for key1 in bestColGroupsKeys:
-	group1 = bestColGroups.get_group(key1)
-	nBefore = len(group1['Operatieduur'])
-	varBefore = group1['Operatieduur'].var()
-	results = []
-	fracMissingPerColumn = calcFracMissingPerCol(group1)
-	for col in categoricalCols:
-		groups = group1.groupby(col)	# Get the group
-		keys = groups.groups.keys() # Get the different types in the group
-		if len(keys) < 2:
-			continue
-		totalVar = 0				
-		for key2 in keys:				# For each type
-			group2 = groups.get_group(key2)			# Get the group
-			var = group2['Operatieduur'].var()	# Calculate its variance
-			if math.isnan(var):					# If the variance is NaN (happens when group only has 1 value)
-				var = 0								# Set variance to 0
-			frac = len(group2['Operatieduur']) / nBefore # Calculate fraction
-			totalVar += var * frac / fracMissingPerColumn[col] # Add variance*fraction to total variance of type, and account for fraction of missing values
-		results.append([col, len(keys), totalVar, totalVar / varBefore, fracMissingPerColumn[col]])
+	for key in keys:
+	
+		weightedCorrs = {}
+		for col in numericalCols:
+			weightedCorrs[col] = 0
 
-	results.sort(key=lambda r : r[2])
-	print("\n%s" % key1)
-	print("CATEGORY".rjust(35), "# TYPES".rjust(10), "Total variance".rjust(15), "Fraction".rjust(10))
-	print("Before".rjust(35), "-".rjust(10), ("%0.2f" % varBefore).rjust(15), "1.00".rjust(10))
-	for col, nKeys, var, frac, missing in results[:5]:
-		print(col.rjust(35), ("%s" % nKeys).rjust(10), ("%0.2f" % var).rjust(15), ("%0.2f" % frac).rjust(10), ("%0.2f" % missing).rjust(10))
+		group = groups.get_group(key)
+		frac = len(group) / n
+		for col in numericalCols:
+			corr = group[col].corr(group["Operatieduur"])
+			if math.isnan(corr):
+				corr = 0
+			weightedCorrs[col] += corr# * frac
+			# print(key, "|", col, "|", n, len(group), corr, weightedCorrs[col])
 
-
+		print(key)
+		for col in numericalCols:
+			print("    %0.3f" % weightedCorrs[col], col)
 
 exit()
 
