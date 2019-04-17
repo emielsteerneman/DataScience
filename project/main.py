@@ -1,9 +1,15 @@
 import math
 import numpy as np
 import pandas as pd
-import seaborn as sns
+import time
+
+from keras.models import Sequential
+from keras.layers import Dense
+
 import matplotlib.pyplot as plt
+import seaborn as sns
 sns.set(style="ticks", color_codes=True)
+
 
 data = pd.read_csv("./surgical_case_durations.csv", delimiter=";", encoding="ISO-8859-1")
 
@@ -82,18 +88,15 @@ def calcBestSplit(df, cols, target, log=True):
 		print("CATEGORY".rjust(35), "# TYPES".rjust(10), "VARIANCE".rjust(10))
 		print("TARGET".rjust(35), "-".rjust(10), "1.00".rjust(10))
 		for col, nKeys, var, frac in results:
-			print(col.rjust(35), ("%s" % nKeys).rjust(10), ("%0.2f" % frac).rjust(10))
+			print(col.rjust(35), ("%s" % nKeys).rjust(10), ("%0.3f" % frac).rjust(10))
+
+		# for col, nKeys, var, frac in results:
+		# 	print(col.rjust(35), ("& %s" % nKeys).rjust(10), ("& %0.3f" % frac).rjust(10), "\\\\")	
+
 
 	return results[0]
 
-
-
-# nanFracs = [0] * len(columnNames)
-# def x(row):
-# 	nanFracs[len(row[row.isna()])] += 1
-# data.apply(x , axis=1)
-# print(list(enumerate(nanFracs)))
-
+# missing = calcFracMissingPerCol(data)
 
 ### Check which columns are numerical or categorical
 columnNames = list(data.columns.values)
@@ -124,7 +127,27 @@ for col in numericalCols:
 
 result = calcBestSplit(data, categoricalCols, "Operatieduur")
 
+def applyLinearRegression(df, source, target):
+	output = df[target].copy()
+	output = output.fillna(output[output.notnull()].mean())
+
+	model = Sequential()
+	model.add(Dense(1, input_shape=(1,), activation='linear'))
+	model.compile(loss='mean_squared_error', optimizer='adam')
+
+	inputCol = df[source].copy()
+	inputCol = inputCol.fillna(inputCol[inputCol.notnull()].mean())
+	hist = model.fit(inputCol, output, batch_size=1, epochs=20, verbose=1)
+	print(source.rjust(30), hist.history['loss'][-1])
+
+### Apply Linear Regression to numerical columns
 if True:
+	for col in numericalCols:
+		applyLinearRegression(data, col, 'Operatieduur')
+
+exit()
+### Check if the corrolation of any of the numerical attributes is better when split on Operatietype
+if False:
 	groups = data.groupby([result[0]])
 	keys = groups.groups.keys()
 	n = len(data)
@@ -149,8 +172,12 @@ if True:
 		for col in numericalCols:
 			print("    %0.3f" % weightedCorrs[col], col)
 
+if True:
+	groups = data.groupby([result[0]])
+	keys = groups.groups.keys()
+	print(groups.size())
+	print(groups.size()[groups.size() == 2])
 exit()
-
 
 diffs = data[data['diff'].notnull()]['diff']
 print()
