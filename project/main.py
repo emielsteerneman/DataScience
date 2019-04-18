@@ -61,12 +61,15 @@ def calcFracMissingPerCol(df):
 		# print(i, "\t%0.2f " % (1 - nan / total), c)
 	return fracMissingPerCol
 
-def calcBestSplit(df, cols, target, log=True):
+def calcBestSplit(df, cols, target, log=True, ignoreNaN=False):
 	results = []
 
 	for col in cols:
 		groups = df.fillna(-1).groupby(col)	# Group the data by the column
+		# groups = df.groupby(col)	# Group the data by the column
 		keys = groups.groups.keys() 		# Get the different types in the groups
+		if ignoreNaN:
+			keys = keys - [-1]
 		varTotal = 0						# Variance accumulator
 		fracMissingPerCol = calcFracMissingPerCol(df)
 
@@ -87,21 +90,80 @@ def calcBestSplit(df, cols, target, log=True):
 
 		results.append([col, len(keys), varTotal, varTotal / varTarget])
 
+	if len(results) == 0:
+		if log:
+			print("=" * 30, "calcBestSplit", "=" * 30)
+			print("No results".rjust(35))
+		return []
 
-
+	results.sort(key=lambda r : r[2])
+	
 	if log:
-		results.sort(key=lambda r : r[2])
-		print("\n", "=" * 30, "calcBestSplit", "=" * 30)
+		print("=" * 30, "calcBestSplit", "=" * 30)
 		print("CATEGORY".rjust(35), "# TYPES".rjust(10), "VARIANCE".rjust(10))
 		# print("TARGET".rjust(35), "-".rjust(10), "1.00".rjust(10))
 		for col, nKeys, var, frac in results[:3]:
 			print(col.rjust(35), ("%s" % nKeys).rjust(10), ("%0.3f" % frac).rjust(10))
-
 		# for col, nKeys, var, frac in results:
 		# 	print(col.rjust(35), ("& %s" % nKeys).rjust(10), ("& %0.3f" % frac).rjust(10), "\\\\")	
 
 
 	return results[0]
+
+def calcBestSplitNum(_df, cols, target, log=True):
+	resultsTotal = []
+
+	for col in cols:
+		df = _df[[col, target]].copy()
+		df[col] = df[col].fillna(df[col][df[col].notnull()].mean())
+
+		values = df[col].values
+		valuesUnique = np.unique(values)
+		nTarget = len(values)
+		varTarget = df[target].var()
+
+		thresholds = []
+		for i in range(len(valuesUnique)-1):
+			thresholds.append((valuesUnique[i]+valuesUnique[i+1])/2)
+
+		results = []
+
+		for thresh in thresholds:
+			myFilter = df[col] < thresh
+			left  = df[target][myFilter]
+			right = df[target][~myFilter]
+
+			nLeft = len(left)
+			nRight = len(right)
+
+			varLeft  = left.values.var()
+			varRight = right.values.var()
+
+			fracLeft  = nLeft  / nTarget
+			fracRight = nRight / nTarget
+
+			varTotal = varLeft * fracLeft + varRight * fracRight
+			# print("tresh", thresh, "left ", len(left), "right", len(right), "     ", varTotal, "    ", col)
+			results.append([thresh, varTarget, varTotal, varLeft, fracLeft, varRight, fracRight, col])
+
+		
+		results.sort(key=lambda r : r[2])
+		if log:
+			print("\n", "THRESH".rjust(50), " VARtarget", "  VARtotal", "   VARleft", "  FRACleft", "  VARright", " FRACright")
+			for t, vTar, vTot, vL, fL, vR, fR, _ in results[:1]:
+				print("%s"%col[:38].rjust(40), 
+					("%0.2f"%t).rjust(10),
+					("%0.2f"%vTar).rjust(10),
+					("%0.2f"%vTot).rjust(10),
+					("%0.2f"%vL).rjust(10),
+					("%0.2f"%fL).rjust(10),
+					("%0.2f"%vR).rjust(10),
+					("%0.2f"%fR).rjust(10))
+		if 0 < len(results):
+			resultsTotal.append(results[0])
+	
+	resultsTotal.sort(key=lambda r : r[2])
+	return resultsTotal[0]
 
 def applyLinearRegression(df, source, target):
 	output = df[target].copy()
@@ -132,7 +194,7 @@ def applyNN(_df, columns, target):
 	model.compile(loss='mean_squared_error', optimizer='adam')
 
 	early_stopping_monitor = EarlyStopping(monitor='loss', patience=20, verbose=0)
-	hist = model.fit(df[columns], output, batch_size=100, epochs=5000, verbose=0, validation_split=0.2, callbacks=[early_stopping_monitor])
+	hist = model.fit(df[columns], output, batch_size=100, epochs=5000, verbose=0, callbacks=[early_stopping_monitor])
 
 	return model, hist
 
@@ -285,7 +347,7 @@ if False:
 		print(t[:38].rjust(40), "  %0.2f" % p, ("%d"%nU).rjust(7), "/", ("%d"%nT).rjust(4), ("%d"%m).rjust(9))
 
 ### Check if predictions would have been more accurate if the mean would've been used
-if True:
+if False:
 	print("\n\n############### Check if predictions would have been more accurate if the mean would've been used")
 	groups = data.groupby("Operatietype")
 	commonOperations = groups.groups.keys()
@@ -314,7 +376,7 @@ if True:
 	print("SUMMARY".rjust(40), "      %9.0f     %9.0f     %9.2f    %0.2f" % (totalPlannedError, totalMeanError, totalPlannedError - totalMeanError, totalPlannedError/totalMeanError ))
 
 ### Compare correlation of all numerical columns against the operation duration
-if True:
+if False:
 	print("COLUMN".rjust(40), "CORRELATION")
 	print("\n############### Compare correlation of all numerical columns against the operation duration")
 	for col in numericalCols:
@@ -323,13 +385,56 @@ if True:
 
 
 
+
+
 ######################################################################
 #################### MODEL ###########################################
 ######################################################################
 
-
-
 result = calcBestSplit(data, categoricalCols, "Operatieduur")
+
+### Store intermediate values to figure out which column influences operation type the most
+intermediate = {}
+groups = data.groupby([result[0]])
+keys = groups.groups.keys()
+### Fill intermediate values with placeholder
+for key in keys:
+	intermediate[key] = {"col" : "none", "fV" : 10}
+
+
+
+### Try splitting again, after splitting once 
+if False:
+	groups = data.groupby([result[0]])
+	keys = groups.groups.keys()
+	n = len(data)
+
+	print("OPERATION".rjust(40), "CATEGORY".rjust(30), "# TYPES".rjust(10), "VARIANCE".rjust(10))
+	for key in keys:
+		group = groups.get_group(key)
+		col, nT, v, fV = calcBestSplit(group, categoricalCols, "Operatieduur", log=False, ignoreNaN=False)
+		print("%s" % key[:38].rjust(40), col[:28].rjust(30), ("%s" % nT).rjust(10), ("%0.3f" % fV).rjust(10))
+		# print("TARGET".rjust(35), "-".rjust(10), "1.00".rjust(10))
+		# for col, nKeys, var, frac, n in results[:3]:
+		# 	print(col.rjust(35), ("%s" % nKeys).rjust(10), ("%0.3f" % frac).rjust(10))
+		if fV < intermediate[key]["fV"]:
+			intermediate[col] = {"col" : col, "fV" : fV}
+
+### Try splitting on numerical, after splitting once 
+if False:
+	groups = data.groupby([result[0]])
+	keys = groups.groups.keys()
+	n = len(data)
+
+	for key in keys:
+		group = groups.get_group(key)
+		# print("\n", key, "(%d samples)" % len(group))
+		t, vTar, vTot, vL, fL, vR, fR, col = calcBestSplitNum(group, numericalCols, "Operatieduur", log=False)
+		fV = vTot / vTar
+		print("%s" % key[:38].rjust(40), col[:28].rjust(30), ("%0.3f" % t).rjust(10), ("%0.3f" % fV).rjust(10))
+
+		if fV < intermediate[key]["fV"]:
+			intermediate[key] = {"col" : col, "fV" : fV}
 
 ### Apply Linear Regression to numerical columns
 if False:
@@ -362,8 +467,8 @@ if False:
 		for col in numericalCols:
 			print("    %0.3f" % weightedCorrs[col], col)
 
-### Run neural network on all numerical cols
-if True:
+### Run neural network on all numerical cols after grouping by operation type
+if False:
 	print("\nApplying neural network on numerical columns after grouping by operation type")
 	df = data.copy()
 	df["Operatieduur"] = df["Operatieduur"].apply(lambda x: x / 100)
@@ -387,28 +492,37 @@ if True:
 		# print("predicted:", errorPredicted)
 		return errorPlanned, errorPredicted, errorMean
 
-	model, hist = applyNN(df, numericalCols, "Operatieduur")
-	errorPlanned, errorPredicted, errorMean = testModel(model, df)
+	mask = np.random.rand(len(df)) < 0.8
+	train = df[mask]
+	test = df[~mask]
+	model, hist = applyNN(train, numericalCols, "Operatieduur")
+	errorPlanned, errorPredicted, errorMean = testModel(model, test)
 
-	print("TYPE".rjust(40), "LOSS".rjust(8), "PLANNED ERROR".rjust(16), "MODEL ERROR".rjust(16), "MEAN ERROR".rjust(16))
-	print("Original".rjust(40), 
-			("%0.2f" % hist.history['loss'][-1]).rjust(8), 
-			("%0.2f" % errorPlanned).rjust(16), 
-			("%0.2f" % errorPredicted).rjust(16),
-			("%0.2f" % errorMean).rjust(16))
+	print("OPERATION".rjust(40), "PLANNED ERROR".rjust(16), "MEAN ERROR".rjust(16), "MODEL ERROR".rjust(16), )
+	print("Original".rjust(40),
+			("  %0.2f" % errorPlanned).rjust(16), 
+			("& %0.2f" % errorMean).rjust(16),
+			("& %0.2f" % errorPredicted).rjust(16))
 
 	groups = df.groupby([result[0]])
 	for key in groups.groups.keys():
 		group = groups.get_group(key)
-		model, hist = applyNN(group, numericalCols, "Operatieduur")
-		errorPlanned, errorPredicted, errorMean = testModel(model, group)
+		mask = np.random.rand(len(group)) < 0.8
+		train = group[mask]
+		test = group[~mask]
+		model, hist = applyNN(train, numericalCols, "Operatieduur")
+		errorPlanned, errorPredicted, errorMean = testModel(model, test)
 		print(key[:38].rjust(40), 
-			("%0.2f" % hist.history['loss'][-1]).rjust(8), 
-			("%0.2f" % errorPlanned).rjust(16), 
-			("%0.2f" % errorPredicted).rjust(16),
-			("%0.2f" % errorMean).rjust(16))
+			("  %0.2f" % errorPlanned).rjust(16), 
+			("& %0.2f" % errorMean).rjust(16),
+			("& %0.2f" % errorPredicted).rjust(16))
 
 
+
+### Print intermediate values
+print("\n\n")
+for key in keys:
+	print("%s" % key[:38].rjust(40), "&", intermediate[key]["col"][:28].rjust(30), "&", ("%0.3f" % intermediate[key]["fV"]).rjust(10))
 
 
 
