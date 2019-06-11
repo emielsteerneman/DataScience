@@ -48,6 +48,7 @@ print()
 bar_heights = Y[0].value_counts(normalize=True).sort_index()
 plt.clf() # Clear the current plot
 plt.bar(bar_heights.index.values, bar_heights, tick_label=activity_labels['activity']) # Barchart of the distribution of classes
+plt.tight_layout()
 plt.savefig("4_2b.png", dpi=300) # Save the figure
 
 ### 4.3
