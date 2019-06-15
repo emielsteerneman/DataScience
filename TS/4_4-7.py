@@ -36,6 +36,10 @@ x = pd.concat([train_x, test_x])
 y = pd.concat([train_y, test_y])
 z = pd.concat([train_z, test_z])
 
+
+
+###############################
+############# 4.4 #############
 ### For each axis, calculate the variance for each row and sum the variances
 print("Calculating variances...")
 x_var = x.apply(lambda row : row.var(), axis='columns').sum()
@@ -49,19 +53,18 @@ print("  Variance z : %0.2f" % z_var)
 print("Greatest variance : %s" % ['x', 'y', 'z'][np.argmax(variances)])
 
 
-
 ### Load body_acc files for axis with greatest variance
 print()
 print("Loading body_acc files...")
 file_data = ['x', 'y', 'z'][np.argmax(variances)]
 file_data_train = folder + "train/Inertial Signals/body_acc_" + file_data + "_train.txt"
-# file_data_test  = folder + "test/Inertial Signals/body_acc_" + file_data + "_test.txt"
 file_labels_train = folder + "train/y_train.txt"
+# file_data_test  = folder + "test/Inertial Signals/body_acc_" + file_data + "_test.txt"
 # file_labels_test  = folder + "test/y_test.txt"
 
 traindata = pd.read_csv(file_data_train, delimiter=" ", header=None, skipinitialspace=True)
-# testdata  = pd.read_csv(file_data_test,  delimiter=" ", header=None, skipinitialspace=True)
 trainlabels = pd.read_csv(file_labels_train, delimiter=" ", header=None, skipinitialspace=True)
+# testdata  = pd.read_csv(file_data_test,  delimiter=" ", header=None, skipinitialspace=True)
 # testlabels  = pd.read_csv(file_labels_test,  delimiter=" ", header=None, skipinitialspace=True)
 
 trainlabels['label'] = trainlabels[0].transform(lambda c : activity_labels['activity'][c-1])
@@ -77,61 +80,52 @@ dataset = dataset.loc[:, :63]
 raw_signal = dataset.values
 ### Flatten the 2D array to a 1D array by concatenating all the rows, effectively retrieving the original signal
 raw_signal = raw_signal.flatten()
+### Repeat labels so that we have a label per datapoint
+raw_labels = np.repeat(labelset[0].values.flatten(), 64)
 
 print()
 print("Datapoints expected : 64 * %d = %d" % (len(dataset.index), 64 * len(dataset.index)))
 print("Datapoints in raw signal        = %d" % raw_signal.size)
+print("Labels for raw signal           = %d" % raw_labels.size)
 
-mean, std, kurt = [], [], []
+### Concatenate signal and labels column-wise : "Again, couple the class labels (Y) with the raw data points (X)"
+signal = np.vstack((raw_signal, raw_labels)).T
+
+############# 4.4 #############
+###############################
+
+
+
+###############################
+############# 4.5 #############
+### 4.5 A
+# "This means that you need to map the original data, for training , 7351 x 128 to the preprocessed data 7351 x 3 (for the features: mean, std, kurtosis)."
+
+mean, std, kurt, labels = [], [], [], []
 
 ### Apply sliding window over raw signal
 for i in range(0, raw_signal.size-64, 64):
-	window = raw_signal[i:i+128]
-	mean.append(window.mean())
-	std.append(window.std())
-	kurt.append(kurtosis(window))
+	window = raw_signal[i:i+128]	# Grab window
+	mean.append(window.mean())		# mean
+	std.append(window.std())		# std
+	kurt.append(kurtosis(window))	# kurtosis
+	labels.append(raw_labels[i])	# label
+### Create Pandas DataFrame for easy kde plotting
+df = pd.DataFrame(np.vstack((mean, std, kurt, labels)).T, columns=["mean", "std", "kurt", "label"])
+### Transform labels from int to string
+df["label"] = df["label"].transform(lambda c : activity_labels['activity'][c-1])
 
-mean, std, kurt = np.array(mean), np.array(std), np.array(kurt)
-
-print(mean)
-print(std)
-print(kurt)
-
-exit()
-
-### Add the labels to the dataset. Not sure why at this point, but the exercise says so
-dataset['label'] = labelset['label']
-
-
-
+### 4.5 B
+groupsByLabel = df.groupby("label")
+for feature in ["mean", "std", "kurt"]:
+	plt.figure()
+	groupsByLabel[feature].plot.kde()
+	plt.legend(groupsByLabel.groups.keys())
+	plt.title(feature)
+	plt.show()
 ############# 4.5 #############
-### a
-print()
-print("Time domain features")
-print("     Range: [%0.4f, %0.4f]" % (raw_signal.min(), raw_signal.max()))
-print("      Mean: %0.4f" % raw_signal.mean())
-print("    stddev: %0.4f" % raw_signal.std())
-print("  kurtosis: %0.4f" % kurtosis(raw_signal))
+###############################
 
-### b
-def toSignal(df): return df.iloc[:, :64].values.flatten() # Function to strip label from dataframe, and concatenate rows into raw signal
-
-byLabel = dataset.groupby('label') # Group samples by class
-groupActivities = byLabel.groups.keys() # All keys of the groups
-activityToSignal = { activity : toSignal(byLabel.get_group(activity)) for activity in groupActivities } # For each group, get the raw signal
-
-### For each activity, get the raw signal and calculate time domain features
-rangePerActivity    = { activity : [signal.min(), signal.max()] for activity, signal in activityToSignal.items()}
-meanPerActivity     = { activity : signal.mean()                for activity, signal in activityToSignal.items()}
-stddevPerActivity   = { activity : signal.std()                 for activity, signal in activityToSignal.items()}
-kurtosisPerActivity = { activity : kurtosis(signal)             for activity, signal in activityToSignal.items()}
-
-print()
-print("        ", " ".join([activity.ljust(20) for activity in groupActivities]) )
-print("   range", " ".join([("[%0.4f, %0.4f]" % (val[0], val[1])).ljust(20) for _, val in rangePerActivity.items()]))
-print("    mean", " ".join([("%0.4f" % val).ljust(20)                       for _, val in meanPerActivity.items()]))
-print("  stddev", " ".join([("%0.4f" % val).ljust(20)                       for _, val in stddevPerActivity.items()]))
-print("kurtosis", " ".join([("%0.4f" % val).ljust(20)                       for _, val in kurtosisPerActivity.items()]))
 
 
 
