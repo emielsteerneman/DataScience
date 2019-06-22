@@ -1,5 +1,7 @@
 from statsmodels.tsa.stattools import adfuller
 from statsmodels.tsa.seasonal import seasonal_decompose
+from statsmodels.tsa.stattools import acf, pacf
+from statsmodels.tsa.arima_model import ARIMA
 
 import sys
 import collections
@@ -21,6 +23,11 @@ try:
     have_ipython = True
 except ImportError:
     have_ipython = False
+
+import warnings
+import matplotlib.cbook
+warnings.filterwarnings("ignore",category=matplotlib.cbook.mplDeprecation)
+warnings.simplefilter(action='ignore', category=FutureWarning)
 
 class KnnDtw(object):
     """K-nearest neighbor classifier using dynamic time warping
@@ -253,12 +260,11 @@ class ProgressBar:
 # amplitude_b = 3*np.sin(time + 1)
 
 # m = KnnDtw()
-# distance = m._dtw_distance(amplitude_a, amplitude_b)
-
+# distance, cost = m._dtw_distance(amplitude_a, amplitude_b)
 # fig = plt.figure(figsize=(12,4))
 # plt.plot(time, amplitude_a, label='A')
 # plt.plot(time, amplitude_b, label='B')
-# plt.title('DTW distance between A and B is %.2f' % distance)
+# plt.title("DTW distance between A and B is %.2f" % distance)
 # plt.ylabel('Amplitude')
 # plt.xlabel('Time')
 # plt.legend()
@@ -315,69 +321,63 @@ class ProgressBar:
 
 
 
-
-
+#######################
+########## A ##########
+#######################
 
 # Plot the yearly temperatures for Norway, Finland, Singapore and Cambodia. Use DTW to measure
 # the similarities between the temperature data of these countries and reflect on the results
-
-
-# temperatures per country
-tpc = pd.read_csv("../climate-change-earth-surface-temperature-data/GlobalLandTemperaturesByCountry.csv")
-
-### Decide where to start with the dates
-# wer = tpc[tpc['Country'] == "Singapore"].reset_index()                # Get data of country
-# print(wer.info())
-# isnull = wer[wer['AverageTemperature'].isnull()]
-# print(isnull[-5:])
-
-# plt.clf()
-# plt.plot(wer['AverageTemperature'])
-# plt.show()
-# exit()
-
 
 def dateToInt(date):
     [year, month, _] = date.split("-")
     return int(year) * 12 + int(month)
 
 countries = ["Norway", "Finland", "Singapore", "Cambodia"]
+tpc = pd.read_csv("../climate-change-earth-surface-temperature-data/GlobalLandTemperaturesByCountry.csv")
+
+########## Figuring out at what date the last NaN occurs in AverageTemperature ##########
+print("Figuring out appropriate starting date..")
+# All rows of the selected countries where the average temperature is NaN
+indicesNaN = tpc["Country"].isin(countries) & tpc["AverageTemperature"].isna()
+groups = tpc[indicesNaN].groupby("Country")
+dates = []
+for country, group in groups:
+    print(country.rjust(12), "|", group["dt"].values[-2])
+    dates.append(group["dt"].values[-2]) # Get the last date where a NaN value occurs in AverageTemperature
+dates.sort(reverse=True)
+startingDate = dates[0]
+startingMonth = dateToInt(startingDate) + 1
+print("Last NaN value for AverageTemperature in %s \n" % startingDate)
+
+
 dataPerCountry = {}
-startingDate = "1863-01-01"
-startingMonth = dateToInt(startingDate)
-nYears = 150
-print("startingMonth: %s" % startingMonth)
+nYears = 100
 
 plt.clf()
 for country in countries:
     data = tpc[tpc['Country'] == country]                # Get data of country
     data = data.reset_index()
     data = data[['dt', 'AverageTemperature']]            # Drop unnecessary columns
-    data = data[data['AverageTemperature'].notnull()]    # Drop columns with NaN values
     data['months'] = data['dt'].transform(lambda date : dateToInt(date))    # Transform datestring into a number
-    print("%s : %d rows, from %s to %s" % (country.rjust(10), data.count()[0], data.iloc[0]['dt'], data.iloc[-1]['dt']))
+    print("%s : contains %d rows, from %s to %s" % (country.rjust(10), data.count()[0], data.iloc[0]['dt'], data.iloc[-1]['dt']))
     
-    index = data['months'].between(startingMonth, startingMonth + nYears * 12)   # Get data for x years, starting at 1863-01-01
+    index = data['months'].between(startingMonth, startingMonth + nYears * 12 - 1)   # Get data for x years, starting at 1863-01-01
     yAxis = data[index] 
     
     yAxis = yAxis['AverageTemperature'].astype('float')            # Transform temperature to float
     yAxis = yAxis.values
-
     # yAxis -= yAxis.mean()                            # Substract mean for DTW
     dataPerCountry[country] = yAxis                  # Store data of country in this map
     plt.plot(yAxis, label=country, linewidth=1.0)    # Plot the data
 
 plt.legend()
 plt.title("Temperature over %d years (%d datapoints)" % (nYears, nYears * 12))
+plt.tight_layout()
 # plt.show()
 
-
-#####################################
 ########## Print DTW table ##########
-#####################################
-
 # dtw = KnnDtw()
-# print("\n# Table with minimal DTW distance")
+# print("\nTable with minimal DTW distance")
 # HeaderRow = "DISTANCE ".ljust(10)
 # for i1, c1 in enumerate(countries):
 #     HeaderRow += c1.ljust(10)
@@ -386,9 +386,7 @@ plt.title("Temperature over %d years (%d datapoints)" % (nYears, nYears * 12))
 # for i1, c1 in enumerate(countries):
 #     Row = (c1 + " ").rjust(10)
 #     for i2, c2 in enumerate(countries):
-#         s1 = dataPerCountry[c1]
-#         s2 = dataPerCountry[c2]
-#         distance, cost = dtw._dtw_distance(s1, s2)
+#         distance, cost = dtw._dtw_distance(dataPerCountry[c1], dataPerCountry[c2])
 #         Row += str(int(distance)).ljust(10)
 #     print(Row)
 
@@ -398,56 +396,220 @@ plt.title("Temperature over %d years (%d datapoints)" % (nYears, nYears * 12))
 ########## B) Dickey Fuller Test ##########
 ###########################################
 
-print('\nDickey-Fuller Test:')
-for country in countries:    
-    dftest = adfuller(dataPerCountry[country], autolag='AIC')
-    pvalue = dftest[1]
-    print(("  P-value for %s" % country).ljust(25), "%0.4f%%" % (pvalue * 100))
-    # dfoutput = pd.Series(dftest[0:4], index=['Test Statistic','p-value','#Lags Used','Number of Observations Used'])
-    # for key,value in dftest[4].items():
-    #     dfoutput['Critical Value (%s)'%key] = value
-    # print(dfoutput)
+# print('\nDickey-Fuller Test:')
+# for country in countries:    
+#     dftest = adfuller(dataPerCountry[country], autolag='AIC')
+#     adf = dftest[0]
+#     pvalue = dftest[1]
+    
+#     print(country.rjust(12), end="   ")
+#     print("ADF=%0.3f" % adf, end="   ")
+#     print("p-value=%0.3f" % pvalue, end="   ")
+#     print("Critical Values : ", end="")
+#     for k, v in dftest[4].items():
+#         print("%s=%0.10f" % (k, v), end="   ")
+#     print()
 
 
-###########################################
-###########################################
-###########################################
+########################
+########## C) ##########
+########################
 
-plt.clf()
+# Temperature and weather data includes seasons, day and night temperature changes as well as global
+# warming. This seasonality and the slow trends (such as global warming) can be removed by differencing 
+# and decomposition techniques. Apply these techniques from the tutorial to de-trend the data and remove
+# seasonality. Again apply DTW on your newly obtained processed data and reflect on the results
+
+## Apply differencing ###
+# plt.clf()
+# differencingPerCountry = {}
 # for country in countries:
-for country in countries:
-    y1 = dataPerCountry[country]
-    y1 -= y1.mean()
-    y2 = [np.cbrt(y) for y in y1]
-    # plt.plot(y1, label="%s y1" % country)
-    plt.plot(y2, label="%s y2" % country)
-
-plt.legend()
+#     data = dataPerCountry[country]
+#     diff = data - np.roll(data, 1)
+#     differencingPerCountry[country] = diff
+#     plt.plot(diff, label=country)
+# plt.legend()
+# plt.title("Differencing per month")
+# plt.tight_layout()
 # plt.show()
 
-
+### Apply decomposition ###
+# plt.clf()
+seasonPerCountry = {}
+trendPerCountry = {}
 for country in countries:
-    print(country)
-    y1 = dataPerCountry[country]
-    decomposition = seasonal_decompose(y1, freq=900)
+    data = pd.Series(dataPerCountry[country])
+    decomp = seasonal_decompose(data, freq=12)
+    
+    trend = decomp.trend
+    seasonal = decomp.seasonal
+    residual = decomp.resid
+    
+    # Fix NaN at the beginning and end of trend
+    trend[:6] = [trend[6]] * 6
+    trend[len(trend)-6:] = [trend[len(trend)-7]] * 6
 
-    trend = decomposition.trend
-    seasonal = decomposition.seasonal
-    residual = decomposition.resid
+    seasonPerCountry[country] = seasonal
+    trendPerCountry[country] = trend
+    
+#     plt.subplot(211)
+#     plt.plot(seasonal, label=country)
+#     plt.subplot(212)
+#     plt.plot(trend, label=country)
 
+# plt.subplot(211)
+# plt.legend()
+# plt.title("Seasonality")
+# plt.subplot(212)
+# plt.legend()
+# plt.title("Trend")
+# plt.tight_layout()
+# plt.show()
+
+### Remove trend and seasonality from data ###
+# plt.clf()
+stationaryDataPerCountry = {}
+for country in countries:
+    data = dataPerCountry[country]
+    newData = data - seasonPerCountry[country] - trendPerCountry[country] # Subtract trend and seasonality
+    stationaryDataPerCountry[country] = newData
+#     plt.plot(newData, label=country)
+# plt.legend()
+# plt.title("Without trend and seasonality over 15 years")
+# plt.tight_layout()
+# plt.show()
+
+### Print DTW table ###
+# dtw = KnnDtw()
+# print("\nTable with minimal DTW distance")
+# HeaderRow = "DISTANCE ".ljust(10)
+# for i1, c1 in enumerate(countries):
+#     HeaderRow += c1.ljust(10)
+# print(HeaderRow)
+
+# for i1, c1 in enumerate(countries):
+#     Row = (c1 + " ").rjust(10)
+#     for i2, c2 in enumerate(countries):
+#         distance, cost = dtw._dtw_distance(stationaryDataPerCountry[c1], stationaryDataPerCountry[c2])
+#         Row += str(int(distance)).ljust(10)
+#     print(Row)
+
+
+
+
+#######################
+########## D ##########
+#######################
+# Read the section on Forecasting models in the tutorial and apply the AR, AM and ARIMA model on
+# the temperature data of one of the four countries. Reflect on the results of the models on the data. Be
+# clear in your methodology and explain which values for p, q and d you use based on the ACF and
+# PACF plots.
+
+country = countries[0]
+dataStationary     = stationaryDataPerCountry[country][:-12*5]
+dataStationaryTest = stationaryDataPerCountry[country][-12*5:]
+data     = dataPerCountry[country][:-12*5]
+dataTest = dataPerCountry[country][-12*5:]
+
+print("\nApplying forecasting models to %s" % country)
+
+
+# [19] Once we have got the stationary time series, we must answer two primary questions:
+# Q1. Is it an AR or MA process?
+# Q2. What order of AR or MA process do we need to use?
+
+# [19]
+# p : Number of AR (Auto-Regressive) terms (p): AR terms are just lags of dependent variable. For instance if p is 5, the predictors for x(t) will be x(t-1)….x(t-5).
+# q : Number of MA (Moving Average) terms (q): MA terms are lagged forecast errors in prediction equation. For instance if q is 5, the predictors for x(t) will be e(t-1)….e(t-5) where e(i) is the difference between the moving average at ith instant and actual value.
+# d : Number of Differences (d): These are the number of nonseasonal differences, i.e. in this case we took the first order difference. So either we can pass that variable and put d=0 or pass the original variable and put d=1. Both will generate same results.
+
+lag_acf = acf(dataStationary, nlags=20)
+lag_pacf = pacf(dataStationary, nlags=20, method='ols')
+
+plt.clf()
+#[19] Plot ACF: 
+plt.subplot(121) 
+plt.plot(lag_acf)
+plt.axhline(y=0,linestyle='--',color='gray')
+plt.axhline(y=-1.96/np.sqrt(len(dataStationary)),linestyle='--',color='gray')
+plt.axhline(y=1.96/np.sqrt(len(dataStationary)),linestyle='--',color='gray')
+plt.title('Autocorrelation Function')
+#[19] Plot PACF:
+plt.subplot(122)
+plt.plot(lag_pacf)
+plt.axhline(y=0,linestyle='--',color='gray')
+plt.axhline(y=-1.96/np.sqrt(len(dataStationary)),linestyle='--',color='gray')
+plt.axhline(y=1.96/np.sqrt(len(dataStationary)),linestyle='--',color='gray')
+plt.title('Partial Autocorrelation Function')
+plt.tight_layout()
+
+plt.show()
+
+# [19] p – The lag value where the PACF chart crosses the upper confidence interval for the first time
+# [19] q – The lag value where the  ACF chart crosses the upper confidence interval for the first time
+p = 3
+q = 2
+
+### AR MODEL ###
+# [19]
+try:
+    model = ARIMA(data, order=(p, 1, 0))
+    results_AR = model.fit(disp=-1)  
     plt.clf()
-    plt.subplot(411)
-    plt.plot(y1, label='Original')
-    plt.legend(loc='best')
-    plt.subplot(412)
-    plt.plot(trend, label='Trend')
-    plt.legend(loc='best')
-    plt.subplot(413)
-    plt.plot(seasonal,label='Seasonality')
-    plt.legend(loc='best')
-    plt.subplot(414)
-    plt.plot(residual, label='Residuals')
-    plt.legend(loc='best')
-    plt.tight_layout()
+    plt.plot(dataStationary)
+    plt.plot(results_AR.fittedvalues, color='red')
+    plt.title('AR 15 years - RSS: %.4f'% sum((results_AR.fittedvalues - dataStationary[:-1])**2))
     plt.show()
+except:
+    print("Could not create AR model")
 
+### MA MODEL ###
+# [19]
+try:
+    model = ARIMA(data, order=(0, 1, q))  
+    results_MA = model.fit(disp=-1)  
+    plt.clf()
+    plt.plot(dataStationary)
+    plt.plot(results_MA.fittedvalues, color='red')
+    plt.title('MA 15 years - RSS: %.4f'% sum((results_MA.fittedvalues - dataStationary[:-1])**2))
+    plt.show()
+except:
+    print("Could not create MA model")
+
+### ARIMA MODEL ###
+# [19]
+try:
+    model = ARIMA(data, order=(p, 1, q))  
+    results_ARIMA = model.fit(disp=-1)  
+    plt.clf()
+    plt.plot(dataStationary)
+    plt.plot(results_ARIMA.fittedvalues, color='red')
+    plt.title('ARIMA 15 years - RSS: %.4f'% sum((results_ARIMA.fittedvalues - dataStationary[:-1])**2))
+    plt.show()
+except:
+    print("Could not create ARIMA model")
+
+
+#######################
+########## E ##########
+#######################
+# Select one of the models from the question above to make a temperature forecast (using for example
+# the forecast() and predict() methods from the models) for the next seven days for your country
+# of choice. You can take the next seven days from the last date present in the dataset of that country.
+# Reflect on the quality of the prediction.
+
+forecast, stderr, conf_int = results_ARIMA.forecast(steps=len(dataTest))
+plt.clf()
+plt.plot(dataTest, label="Actual")
+plt.plot(forecast, label="Prediction", color="red")
+plt.title("Forecast vs actual temperatures over 5 years")
+plt.xlabel("Month")
+plt.ylabel("Temperature")
+plt.show()
+
+
+
+
+
+
+exit()
